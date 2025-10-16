@@ -15,7 +15,7 @@ Current version allows users to:
 
 ## Documentation
 
-Docusaurus documentation is hosted at:(https://nillion-keychain-docs.vercel.app/)[https://nillion-keychain-docs.vercel.app/]
+Docusaurus documentation is hosted at: https://nillion-keychain-docs.vercel.app/
 
 It includes more detailed breakdown of features and tech under the hood of Nillion Keychain.
 

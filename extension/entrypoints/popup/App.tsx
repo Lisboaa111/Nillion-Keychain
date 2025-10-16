@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Keypair } from "@nillion/nuc";
 import { SecretVaultUserClient } from "@nillion/secretvaults";
+import { encryptData, decryptData, validatePassword } from "./crypto";
 import "./App.css";
 
 const NODES = [
@@ -23,7 +24,10 @@ interface ACL {
   execute: boolean;
 }
 
+type AppScreen = "loading" | "onboard" | "setup-password" | "lock" | "main";
+
 function App() {
+  const [screen, setScreen] = useState<AppScreen>("loading");
   const [wallet, setWallet] = useState({ has: false, did: "", key: "" });
   const [tab, setTab] = useState<"wallet" | "documents" | "approve">("wallet");
   const [loading, setLoading] = useState(true);
@@ -43,31 +47,64 @@ function App() {
   const [request, setRequest] = useState<any>(null);
   const [busy, setBusy] = useState(false);
 
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [unlockError, setUnlockError] = useState("");
+  const [pendingKeypair, setPendingKeypair] = useState<{
+    privateKey: string;
+    did: string;
+  } | null>(null);
+
   useEffect(() => {
-    checkWallet();
+    checkWalletStatus();
     checkRequest();
     loadSites();
   }, []);
 
   useEffect(() => {
-    if (wallet.has && wallet.did) checkSub();
-  }, [wallet.has, wallet.did]);
+    if (wallet.has && wallet.did && screen === "main") {
+      checkSub();
+    }
+  }, [wallet.has, wallet.did, screen]);
 
   useEffect(() => {
-    if (wallet.has && docs.length === 0) {
+    if (wallet.has && docs.length === 0 && screen === "main") {
       loadDocs();
     }
-  }, [wallet.has]);
+  }, [wallet.has, screen]);
 
-  const checkWallet = async () => {
+  const checkWalletStatus = async () => {
     try {
       const r = await chrome.storage.local.get([
-        "nillion_private_key",
+        "nillion_encrypted_key",
+        "nillion_salt",
+        "nillion_iv",
         "nillion_did",
+        "nillion_unlocked",
       ]);
-      if (r.nillion_private_key)
-        setWallet({ has: true, did: r.nillion_did || "", key: "" });
-    } catch (e) {}
+
+      if (r.nillion_encrypted_key) {
+        if (r.nillion_unlocked === true) {
+          const sessionKey = await chrome.storage.session?.get(
+            "nillion_session_key"
+          );
+          if (sessionKey?.nillion_session_key) {
+            setWallet({ has: true, did: r.nillion_did || "", key: "" });
+            setScreen("main");
+          } else {
+            setScreen("lock");
+          }
+        } else {
+          setScreen("lock");
+        }
+      } else {
+        setScreen("onboard");
+      }
+    } catch (e) {
+      console.error("Error checking wallet:", e);
+      setScreen("onboard");
+    }
     setLoading(false);
   };
 
@@ -95,8 +132,15 @@ function App() {
   const loadDocs = async () => {
     setBusy(true);
     try {
-      const r = await chrome.storage.local.get("nillion_private_key");
-      const kp = Keypair.from(r.nillion_private_key);
+      const sessionKey = await chrome.storage.session?.get(
+        "nillion_session_key"
+      );
+      if (!sessionKey?.nillion_session_key) {
+        setScreen("lock");
+        return;
+      }
+
+      const kp = Keypair.from(sessionKey.nillion_session_key);
       const user = await SecretVaultUserClient.from({
         baseUrls: NODES,
         keypair: kp,
@@ -104,15 +148,24 @@ function App() {
       });
       const res = await user.listDataReferences();
       setDocs(res.data || []);
-    } catch (e) {}
+    } catch (e) {
+      console.error("Error loading docs:", e);
+    }
     setBusy(false);
   };
 
   const loadDoc = async (doc: Doc) => {
     try {
       setSelected({ ...doc, data: "Loading..." });
-      const r = await chrome.storage.local.get("nillion_private_key");
-      const kp = Keypair.from(r.nillion_private_key);
+      const sessionKey = await chrome.storage.session?.get(
+        "nillion_session_key"
+      );
+      if (!sessionKey?.nillion_session_key) {
+        setScreen("lock");
+        return;
+      }
+
+      const kp = Keypair.from(sessionKey.nillion_session_key);
       const user = await SecretVaultUserClient.from({
         baseUrls: NODES,
         keypair: kp,
@@ -126,6 +179,204 @@ function App() {
     } catch (e: any) {
       setSelected({ ...doc, data: { error: e.message } });
     }
+  };
+
+  const createWallet = async () => {
+    try {
+      const kp = Keypair.generate();
+      const pk = kp.privateKey();
+      const key =
+        typeof pk === "string"
+          ? pk
+          : Array.from(pk as Uint8Array)
+              .map((b) => b.toString(16).padStart(2, "0"))
+              .join("");
+      const did = kp.toDid().toString();
+
+      setPendingKeypair({ privateKey: key, did });
+      setScreen("setup-password");
+    } catch (e) {
+      console.error("Error creating wallet:", e);
+    }
+  };
+
+  const importWallet = async () => {
+    const key = prompt("Enter private key:");
+    if (!key) return;
+    try {
+      const kp = Keypair.from(key);
+      const did = kp.toDid().toString();
+
+      setPendingKeypair({ privateKey: key, did });
+      setScreen("setup-password");
+    } catch (e) {
+      alert("Invalid private key");
+    }
+  };
+
+  const setupPassword = async () => {
+    setPasswordError("");
+
+    if (!password) {
+      setPasswordError("Password is required");
+      return;
+    }
+
+    if (password.length < 8) {
+      setPasswordError("Password must be at least 8 characters");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setPasswordError("Passwords do not match");
+      return;
+    }
+
+    if (!pendingKeypair) {
+      setPasswordError("No keypair found");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const { encrypted, salt, iv } = await encryptData(
+        pendingKeypair.privateKey,
+        password
+      );
+
+      await chrome.storage.local.set({
+        nillion_encrypted_key: encrypted,
+        nillion_salt: salt,
+        nillion_iv: iv,
+        nillion_did: pendingKeypair.did,
+        nillion_unlocked: true,
+      });
+
+      if (chrome.storage.session) {
+        await chrome.storage.session.set({
+          nillion_session_key: pendingKeypair.privateKey,
+        });
+      }
+
+      setPassword("");
+      setConfirmPassword("");
+      setPendingKeypair(null);
+
+      setWallet({ has: true, did: pendingKeypair.did, key: "" });
+      setScreen("main");
+    } catch (e) {
+      console.error("Error setting up password:", e);
+      setPasswordError("Failed to encrypt wallet");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const unlockWallet = async () => {
+    setUnlockError("");
+
+    if (!password) {
+      setUnlockError("Password is required");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const r = await chrome.storage.local.get([
+        "nillion_encrypted_key",
+        "nillion_salt",
+        "nillion_iv",
+        "nillion_did",
+      ]);
+
+      if (!r.nillion_encrypted_key || !r.nillion_salt || !r.nillion_iv) {
+        setUnlockError("Wallet data not found");
+        return;
+      }
+
+      const isValid = await validatePassword(
+        password,
+        r.nillion_encrypted_key,
+        r.nillion_salt,
+        r.nillion_iv
+      );
+
+      if (!isValid) {
+        setUnlockError("Invalid password");
+        return;
+      }
+
+      const decryptedKey = await decryptData(
+        r.nillion_encrypted_key,
+        password,
+        r.nillion_salt,
+        r.nillion_iv
+      );
+
+      if (chrome.storage.session) {
+        await chrome.storage.session.set({
+          nillion_session_key: decryptedKey,
+        });
+      }
+
+      await chrome.storage.local.set({ nillion_unlocked: true });
+
+      setPassword("");
+      setWallet({ has: true, did: r.nillion_did || "", key: "" });
+      setScreen("main");
+    } catch (e: any) {
+      console.error("Error unlocking wallet:", e);
+      setUnlockError(e.message || "Failed to unlock wallet");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const lockWallet = async () => {
+    try {
+      if (chrome.storage.session) {
+        await chrome.storage.session.remove("nillion_session_key");
+      }
+
+      await chrome.storage.local.set({ nillion_unlocked: false });
+
+      setWallet({ has: false, did: "", key: "" });
+      setDocs([]);
+      setSelected(null);
+      setScreen("lock");
+    } catch (e) {
+      console.error("Error locking wallet:", e);
+    }
+  };
+
+  const exportKey = async () => {
+    const sessionKey = await chrome.storage.session?.get("nillion_session_key");
+    if (sessionKey?.nillion_session_key) {
+      setWallet({ ...wallet, key: sessionKey.nillion_session_key });
+    }
+  };
+
+  const copy = (text: string) => {
+    navigator.clipboard.writeText(text);
+    const b = document.activeElement as HTMLButtonElement;
+    if (b) {
+      const orig = b.innerHTML;
+      b.innerHTML = "✓";
+      setTimeout(() => (b.innerHTML = orig), 1000);
+    }
+  };
+
+  const disconnect = async (site: string) => {
+    if (!confirm(`Disconnect from ${site}?`)) return;
+    try {
+      const r = await chrome.runtime.sendMessage({
+        type: "REMOVE_CONNECTED_SITE",
+        origin: site,
+      });
+      if (r.success) setSites(sites.filter((s) => s !== site));
+    } catch (e) {}
   };
 
   const isOwner = (
@@ -158,8 +409,15 @@ function App() {
     if (!editAcl || !selected) return;
     setBusy(true);
     try {
-      const r = await chrome.storage.local.get("nillion_private_key");
-      const kp = Keypair.from(r.nillion_private_key);
+      const sessionKey = await chrome.storage.session?.get(
+        "nillion_session_key"
+      );
+      if (!sessionKey?.nillion_session_key) {
+        setScreen("lock");
+        return;
+      }
+
+      const kp = Keypair.from(sessionKey.nillion_session_key);
       const user = await SecretVaultUserClient.from({
         baseUrls: NODES,
         keypair: kp,
@@ -178,6 +436,7 @@ function App() {
       setModal(null);
       await loadDoc(selected);
     } catch (e: any) {
+      console.error("Error modifying ACL:", e);
     } finally {
       setBusy(false);
     }
@@ -187,8 +446,15 @@ function App() {
     if (!newDid || !selected) return;
     setBusy(true);
     try {
-      const r = await chrome.storage.local.get("nillion_private_key");
-      const kp = Keypair.from(r.nillion_private_key);
+      const sessionKey = await chrome.storage.session?.get(
+        "nillion_session_key"
+      );
+      if (!sessionKey?.nillion_session_key) {
+        setScreen("lock");
+        return;
+      }
+
+      const kp = Keypair.from(sessionKey.nillion_session_key);
       const user = await SecretVaultUserClient.from({
         baseUrls: NODES,
         keypair: kp,
@@ -203,6 +469,7 @@ function App() {
       setNewDid("");
       await loadDoc(selected);
     } catch (e: any) {
+      console.error("Error adding ACL:", e);
     } finally {
       setBusy(false);
     }
@@ -212,8 +479,15 @@ function App() {
     if (!selected || !confirm(`Revoke ${grantee.substring(0, 30)}...?`)) return;
     setBusy(true);
     try {
-      const r = await chrome.storage.local.get("nillion_private_key");
-      const kp = Keypair.from(r.nillion_private_key);
+      const sessionKey = await chrome.storage.session?.get(
+        "nillion_session_key"
+      );
+      if (!sessionKey?.nillion_session_key) {
+        setScreen("lock");
+        return;
+      }
+
+      const kp = Keypair.from(sessionKey.nillion_session_key);
       const user = await SecretVaultUserClient.from({
         baseUrls: NODES,
         keypair: kp,
@@ -226,6 +500,7 @@ function App() {
       });
       await loadDoc(selected);
     } catch (e: any) {
+      console.error("Error revoking ACL:", e);
     } finally {
       setBusy(false);
     }
@@ -235,8 +510,15 @@ function App() {
     if (!selected || !confirm("Delete permanently?")) return;
     setBusy(true);
     try {
-      const r = await chrome.storage.local.get("nillion_private_key");
-      const kp = Keypair.from(r.nillion_private_key);
+      const sessionKey = await chrome.storage.session?.get(
+        "nillion_session_key"
+      );
+      if (!sessionKey?.nillion_session_key) {
+        setScreen("lock");
+        return;
+      }
+
+      const kp = Keypair.from(sessionKey.nillion_session_key);
       const user = await SecretVaultUserClient.from({
         baseUrls: NODES,
         keypair: kp,
@@ -249,6 +531,7 @@ function App() {
       setSelected(null);
       await loadDocs();
     } catch (e: any) {
+      console.error("Error deleting document:", e);
     } finally {
       setBusy(false);
     }
@@ -280,70 +563,8 @@ function App() {
     }
   };
 
-  const createWallet = async () => {
-    try {
-      const kp = Keypair.generate();
-      const pk = kp.privateKey();
-      const key =
-        typeof pk === "string"
-          ? pk
-          : Array.from(pk as Uint8Array)
-              .map((b) => b.toString(16).padStart(2, "0"))
-              .join("");
-      const did = kp.toDid().toString();
-      await chrome.storage.local.set({
-        nillion_private_key: key,
-        nillion_did: did,
-      });
-      setWallet({ has: true, did, key });
-    } catch (e) {}
-  };
-
-  const importWallet = async () => {
-    const key = prompt("Enter private key:");
-    if (!key) return;
-    try {
-      const kp = Keypair.from(key);
-      const did = kp.toDid().toString();
-      await chrome.storage.local.set({
-        nillion_private_key: key,
-        nillion_did: did,
-      });
-      setWallet({ has: true, did, key: "" });
-    } catch (e) {}
-  };
-
-  const exportKey = async () => {
-    const r = await chrome.storage.local.get("nillion_private_key");
-    if (r.nillion_private_key)
-      setWallet({ ...wallet, key: r.nillion_private_key });
-  };
-
-  const copy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    const b = document.activeElement as HTMLButtonElement;
-    if (b) {
-      const orig = b.innerHTML;
-      b.innerHTML = "✓";
-      setTimeout(() => (b.innerHTML = orig), 1000);
-    }
-  };
-
-  const disconnect = async (site: string) => {
-    if (!confirm(`Disconnect from ${site}?`)) return;
-    try {
-      const r = await chrome.runtime.sendMessage({
-        type: "REMOVE_CONNECTED_SITE",
-        origin: site,
-      });
-      if (r.success) setSites(sites.filter((s) => s !== site));
-    } catch (e) {}
-  };
-
   const renderVal = (k: string, v: any) => {
     if (k === "_acl") return null;
-    // if (k === "_owner") return <div className="value-field">{v}</div>;
-    // if (k === "_id") return <div className="value-field">{v}</div>;
 
     if (typeof v === "string") {
       return (
@@ -474,8 +695,15 @@ function App() {
     if (!request) return;
     try {
       setLoading(true);
-      const r = await chrome.storage.local.get("nillion_private_key");
-      const kp = Keypair.from(r.nillion_private_key);
+      const sessionKey = await chrome.storage.session?.get(
+        "nillion_session_key"
+      );
+      if (!sessionKey?.nillion_session_key) {
+        setScreen("lock");
+        return;
+      }
+
+      const kp = Keypair.from(sessionKey.nillion_session_key);
       let result: any = { success: true };
 
       if (request.action === "storeData")
@@ -518,7 +746,7 @@ function App() {
     window.close();
   };
 
-  if (loading) {
+  if (screen === "loading") {
     return (
       <div className="container">
         <div className="loading-page">Loading</div>
@@ -526,7 +754,7 @@ function App() {
     );
   }
 
-  if (!wallet.has) {
+  if (screen === "onboard") {
     return (
       <div className="container onboard">
         <div className="onboard-content">
@@ -551,6 +779,102 @@ function App() {
     );
   }
 
+  if (screen === "setup-password") {
+    return (
+      <div className="container onboard">
+        <div className="onboard-content">
+          <div className="main-header">
+            <h2>
+              Setup <span className="header-accent">Password</span>
+            </h2>
+          </div>
+          <div className="password-setup-form">
+            <p className="password-instruction">
+              Create a password to encrypt your wallet. You'll need this
+              password to unlock your wallet.
+            </p>
+            <div className="form-field">
+              <label>Password (min. 8 characters)</label>
+              <input
+                type="password"
+                className="form-input"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                autoFocus
+              />
+            </div>
+            <div className="form-field">
+              <label>Confirm Password</label>
+              <input
+                type="password"
+                className="form-input"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Confirm password"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") setupPassword();
+                }}
+              />
+            </div>
+            {passwordError && (
+              <div className="error-message">{passwordError}</div>
+            )}
+            <button
+              className="btn-create"
+              onClick={setupPassword}
+              disabled={loading}
+            >
+              {loading ? "Encrypting..." : "Create Wallet"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (screen === "lock") {
+    return (
+      <div className="container onboard">
+        <div className="onboard-content">
+          <div className="main-header">
+            <h2>
+              Unlock <span className="header-accent">Wallet</span>
+            </h2>
+          </div>
+          <div className="password-setup-form">
+            <div className="lock-icon">🔒</div>
+            <p className="password-instruction">
+              Enter your password to unlock your wallet
+            </p>
+            <div className="form-field">
+              <label>Password</label>
+              <input
+                type="password"
+                className="form-input"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") unlockWallet();
+                }}
+              />
+            </div>
+            {unlockError && <div className="error-message">{unlockError}</div>}
+            <button
+              className="btn-create"
+              onClick={unlockWallet}
+              disabled={loading}
+            >
+              {loading ? "Unlocking..." : "Unlock"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="container">
       <div className="main-header">
@@ -564,6 +888,9 @@ function App() {
           <div className="view">
             <div className="view-header">
               <h2>Key Details</h2>
+              <button className="btn-lock" onClick={lockWallet}>
+                🔒 Lock
+              </button>
             </div>
 
             {sub && (

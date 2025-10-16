@@ -6,8 +6,8 @@ import nodePolyfills from "rollup-plugin-node-polyfills";
 export default defineConfig({
   manifest: {
     name: "Nillion Keychain",
-    description: "Secure wallet for Nillion Network",
-    version: "1.0.0",
+    description: "Secure wallet for Nillion Network with encrypted key storage",
+    version: "2.0.0",
     permissions: ["storage", "activeTab"],
     host_permissions: ["<all_urls>"],
     content_scripts: [
