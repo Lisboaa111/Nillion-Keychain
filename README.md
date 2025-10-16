@@ -4,6 +4,14 @@
 
 Nillion Keychain is feature-rich browser extension for interacting with data stored in Nillion SecretVaults. This makes onboarding and usafe for real-world applications easier for non-technical users by freeing them from manual key management.
 
+<p align="center">
+<br />
+    <img src="/img/1.png" width="600" alt="logo"/>
+<br />
+    <img src="/img/2.png" width="600" alt="logo"/>
+<br />
+</p>
+
 Current version allows users to:
 
 - Create their DIDs(DIDs are generated using `Keypair.generate();` from Nillion library, private keys are encrypted using chosen password and kept encrypted in local storage)
@@ -140,11 +148,3 @@ It includes more detailed breakdown of features and tech under the hood of Nilli
 
 - Install dependencies `npm i`
 - Start docusaurus locally `npm run start`
-
-```
-
-```
-
-```
-
-```
