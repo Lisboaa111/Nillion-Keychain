@@ -54,11 +54,11 @@ Current version allows users to:
 
 - **List all documents** owned by the user
 - **View document content** (pretty-formatted or raw JSON)
-- **Copy document/collection IDs**
+- **Copy document / collection IDs**
 - **Delete documents** permanently
 - **Real-time data loading**
 
-## Communication Flow\*\*
+## Communication Flow
 
 ```
 
