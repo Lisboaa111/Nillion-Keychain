@@ -5,11 +5,13 @@
 Nillion Keychain is feature-rich browser extension for interacting with data stored in Nillion SecretVaults. This makes onboarding and usafe for real-world applications easier for non-technical users by freeing them from manual key management.
 
 <p align="center">
-<br />
-    <img src="/img/1.png" width="600" alt="logo"/>
-<br />
-    <img src="/img/2.png" width="600" alt="logo"/>
-<br />
+    <br />
+        <img src="/img/1.png" width="400" alt="logo"/>
+    <br />
+        <img src="/img/2.png" width="400" alt="logo"/>
+    <br />
+        <img src="/img/3.png" width="400" alt="logo"/>
+    <br />
 </p>
 
 Current version allows users to:
