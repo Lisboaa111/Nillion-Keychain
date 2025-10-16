@@ -1,0 +1,6 @@
+auto-chrome.js
+node_modules
+.env
+.wxt
+.output
+test-dapp.html

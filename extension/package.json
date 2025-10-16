@@ -1,0 +1,38 @@
+{
+  "name": "extension",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "serve": "npx http-server -p 8000"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@nillion/nuc": "^0.1.1",
+    "@nillion/secretvaults": "^0.1.6",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "util": "^0.12.5",
+    "wxt": "^0.20.11"
+  },
+  "devDependencies": {
+    "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
+    "@esbuild-plugins/node-modules-polyfill": "^0.2.2",
+    "@types/chrome": "^0.1.22",
+    "@wxt-dev/module-react": "^1.1.5",
+    "buffer": "^6.0.3",
+    "playwright": "^1.56.0",
+    "process": "^0.11.10",
+    "rollup-plugin-node-polyfills": "^0.2.1",
+    "stream-browserify": "^3.0.0",
+    "typescript": "^5.9.3"
+  }
+}
