@@ -1,5 +1,7 @@
 # Nillion Keychain
 
+## Overview
+
 Nillion Keychain is feature-rich browser extension for interacting with data stored in Nillion SecretVaults. This makes onboarding and usafe for real-world applications easier for non-technical users by freeing them from manual key management.
 
 Current version allows users to:
@@ -11,19 +13,11 @@ Current version allows users to:
 - Connect with Nillion - Connect with DID to websites integrating Nillion with active DID
 - Wallet <-> Dapp communication - Once connected, dapp can requests actions in walleet like listing data, storing new documents, requesting access to documents, reading document details
 
-Docusaurus documentation is hosted at:
+## Documentation
 
-## Overview
+Docusaurus documentation is hosted at:(https://nillion-keychain-docs.vercel.app/)[https://nillion-keychain-docs.vercel.app/]
 
-### Extension
-
-### Features
-
-### Testing Dapp
-
-### Backend
-
-### Documentation
+It includes more detailed breakdown of features and tech under the hood of Nillion Keychain.
 
 ## Setup
 
